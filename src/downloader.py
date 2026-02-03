@@ -143,7 +143,6 @@ class YtDlpWrapper:
             'format': formatted_format_string,
             'progress_hooks': [hook],
             'outtmpl': f'{self.download_dir}/%(title)s_%(resolution)s_%(id)s.%(ext)s',
-            'merge_output_format': 'mp4' # Force MP4 container for compatibility
         })
         
         # If audio only, we want postprocessors to convert to mp3
@@ -154,8 +153,14 @@ class YtDlpWrapper:
                 'preferredquality': '192',
             }]
             opts['outtmpl'] = f'{self.download_dir}/%(title)s_audio_%(id)s.%(ext)s'
-            # Remove merge_output_format for audio only to avoid conflicts
-            opts.pop('merge_output_format', None)
+        else:
+            # Video: Force usage of mp4 container and potentially re-encode for compatibility
+            # This fixes "black screen" or "stuck image" issues on FB/others (often due to av1/vp9 codecs)
+            opts['merge_output_format'] = 'mp4'
+            opts['postprocessors'] = [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }]
 
         def run_download():
             with YoutubeDL(opts) as ydl:
