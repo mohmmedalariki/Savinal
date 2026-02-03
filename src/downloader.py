@@ -115,65 +115,42 @@ class YtDlpWrapper:
             'type': 'audio'
         })
         
-        # Standard Resolutions using a mapping
-        # We look for the best video stream for each target resolution
-        desired_resolutions = [1080, 720, 480, 360]
+        # Dynamic Video Resolution Selection
+        # Instead of looking for specific [1080, 720], we just take the best unique heights available.
+        # 1. Filter usable video streams
+        video_formats = [f for f in raw_formats if f.get('vcodec') != 'none' and f.get('height')]
+        
+        # 2. Sort by height (descending)
+        video_formats.sort(key=lambda x: x['height'], reverse=True) # Highest first
+        
         found_res = set()
         
-        # Pre-filter suitable video streams
-        video_formats = [f for f in raw_formats if f.get('vcodec') != 'none' and f.get('height')]
-        video_formats.sort(key=lambda x: x['height'], reverse=True) # Highest first
-
-        for target in desired_resolutions:
-            # Find the best match close to this resolution
-            # We strictly look for exact match or slightly higher/lower? 
-            # Simple approach: distinct heights present in the file
-            for f in video_formats:
-                res = f.get('height')
-                # Check if this res matches one of our desired targets exactly
-                if res == target and res not in found_res:
-                    filesize = f.get('filesize') or f.get('filesize_approx')
-                    size_str = ""
-                    if filesize:
-                        size_mb = filesize / (1024 * 1024)
-                        size_str = f" ~{size_mb:.1f}MB"
-                    
-                    label = f"{target}p{size_str}"
-                    options.append({
-                        'format_id': f.get('format_id'),
-                        'label': label,
-                        'ext': 'mp4', # We force merge to mp4 usually
-                        'type': 'video',
-                        'filesize': filesize
-                    })
-                    found_res.add(target)
-                    break 
-        
-        # Fallback: If we have very few options (e.g. only audio + 0-1 videos), 
-        # add the best available video streams that didn't match strict buckets.
-        # This handles platforms like X/Twitter using weird resolutions (e.g. 640x360).
-        if len(found_res) == 0:
-            for f in video_formats:
-                res = f.get('height')
-                if res and res not in found_res:
-                    filesize = f.get('filesize') or f.get('filesize_approx')
-                    size_str = ""
-                    if filesize:
-                        size_mb = filesize / (1024 * 1024)
-                        size_str = f" ~{size_mb:.1f}MB"
-                    
-                    label = f"{res}p{size_str}"
-                    options.append({
-                        'format_id': f.get('format_id'),
-                        'label': label,
-                        'ext': 'mp4',
-                        'type': 'video',
-                        'filesize': filesize
-                    })
-                    found_res.add(res)
-                    # Limit to top 3 fallback options
-                    if len(found_res) >= 3:
-                        break
+        for f in video_formats:
+            res = f.get('height')
+            if res and res not in found_res:
+                filesize = f.get('filesize') or f.get('filesize_approx')
+                size_str = ""
+                if filesize:
+                    size_mb = filesize / (1024 * 1024)
+                    size_str = f" ~{size_mb:.1f}MB"
+                
+                label = f"{res}p{size_str}"
+                
+                # Check codec to hint better compatibility? (e.g. h264 vs av01)
+                # For now, just label by resolution.
+                
+                options.append({
+                    'format_id': f.get('format_id'),
+                    'label': label,
+                    'ext': 'mp4',
+                    'type': 'video',
+                    'filesize': filesize
+                })
+                found_res.add(res)
+                
+                # Limit to top 5 video options to avoid spam
+                if len(found_res) >= 5:
+                    break
 
         return options
 
