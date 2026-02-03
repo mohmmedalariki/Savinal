@@ -55,6 +55,9 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(messages.ERROR_INVALID_URL)
         return ConversationHandler.END
         
+    # Send reminder (Quranic verse)
+    await update.message.reply_text(messages.REMINDER_MESSAGE)
+        
     status_msg = await update.message.reply_text(messages.CHECKING_URL)
     
     try:

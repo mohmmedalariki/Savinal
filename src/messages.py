@@ -33,3 +33,6 @@ UPLOADING_S3 = "File too large for Telegram. Uploading to external storage..."
 S3_LINK_READY = "Here is your download link (valid for 24h):\n{url}"
 
 CANCELED = "Download cancelled."
+
+# Quranic Reminder
+REMINDER_MESSAGE = "يَعْلَمُ خَائِنَةَ الْأَعْيُنِ وَمَا تُخْفِي الصُّدُورُ"
