@@ -128,6 +128,7 @@ async def process_download(update, context, url, format_id, message_object):
     """Actual download logic, running in background."""
     
     last_update_percent = 0
+    loop = asyncio.get_running_loop()
     
     def progress_callback(d):
         nonlocal last_update_percent
@@ -139,10 +140,11 @@ async def process_download(update, context, url, format_id, message_object):
                 # update every 20%
                 if p - last_update_percent >= 20 or p == 100:
                     last_update_percent = p
-                    # We need to schedule the edit on the loop
-                    # Note: handling 'message_object' which might be stale if user deleted chat is risky
-                    # We'll use a silent try/except
-                    asyncio.create_task(safe_edit(message_object, messages.DOWNLOADING.format(percent=p)))
+                    # We are in a thread here (yt-dlp), so we must use threadsafe call
+                    asyncio.run_coroutine_threadsafe(
+                        safe_edit(message_object, messages.DOWNLOADING.format(percent=p)), 
+                        loop
+                    )
             except ValueError:
                 pass
 
