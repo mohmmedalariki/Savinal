@@ -17,40 +17,6 @@ class YtDlpWrapper:
     def __init__(self, download_dir='downloads'):
         self.download_dir = download_dir
         os.makedirs(download_dir, exist_ok=True)
-        
-        # Handle Cookies from Env (for YouTube "Sign in" errors)
-        # Handle Cookies from Env (for YouTube "Sign in" errors)
-        self.cookie_file = None
-        cookies_content = os.getenv('COOKIES_CONTENT')
-        if cookies_content:
-            try:
-                self.cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
-                
-                # Check if it looks like Base64 (simple heuristic: no spaces, proper padding)
-                # Or just try to decode it first.
-                import base64
-                content_to_write = cookies_content
-                
-                # Try to decode if it looks like b64 (no spaces, newlines are fine but often stripped in UI)
-                # If the user pasted raw text with tabs, it might fail decode, which is fine.
-                try:
-                    # detailed check or just blind try
-                    decoded_bytes = base64.b64decode(cookies_content)
-                    # If it decodes to something that looks like utf-8 text, use it
-                    decoded_str = decoded_bytes.decode('utf-8')
-                    # Validation: Does it look like Netscape format? (Access, Path, etc) or just random binary?
-                    if '# Netscape' in decoded_str or '.google.com' in decoded_str or 'TRUE' in decoded_str:
-                         content_to_write = decoded_str
-                         logger.info("Detected and decoded Base64 cookie content.")
-                except Exception:
-                    # Not base64, assume raw text
-                    pass
-
-                with open(self.cookie_file, 'w') as f:
-                    f.write(content_to_write)
-                logger.info(f"Loaded cookies from environment into {self.cookie_file}")
-            except Exception as e:
-                logger.error(f"Failed to write cookies file: {e}")
 
     def _get_opts(self, extra_opts=None):
         """Return base yt-dlp options."""
@@ -58,29 +24,8 @@ class YtDlpWrapper:
             'quiet': True,
             'no_warnings': True,
             'outtmpl': f'{self.download_dir}/%(id)s_%(format_id)s.%(ext)s',
-            'restrictfilenames': True,
-            # Mimic a real browser to avoid being blocked (especially by FB/IG)
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            # Prefer MP4/H264 for compatibility
-            'format_sort': ['res:1080', 'res:720', 'res:480', 'codec:h264', 'ext:mp4:m4a'],
+            'restrictfilenames': True,  # ASCII only filenames
         }
-        
-        # Add cookie file if available
-        if self.cookie_file and os.path.exists(self.cookie_file):
-            opts['cookiefile'] = self.cookie_file
-            
-        # Try to use alternative clients for YouTube to bypass bot detection if no cookies
-        # or even with cookies to be safer.
-        # 'android' client is often less throttled.
-        # We perform a safe merge if extra_opts has extractor_args
-        if 'extractor_args' not in opts:
-             opts['extractor_args'] = {}
-        
-        # Default to android/web clients for youtube
-        opts['extractor_args']['youtube'] = {
-            'player_client': ['android', 'web']
-        }
-
         if extra_opts:
             opts.update(extra_opts)
         return opts
@@ -115,42 +60,65 @@ class YtDlpWrapper:
             'type': 'audio'
         })
         
-        # Dynamic Video Resolution Selection
-        # Instead of looking for specific [1080, 720], we just take the best unique heights available.
-        # 1. Filter usable video streams
-        video_formats = [f for f in raw_formats if f.get('vcodec') != 'none' and f.get('height')]
-        
-        # 2. Sort by height (descending)
-        video_formats.sort(key=lambda x: x['height'], reverse=True) # Highest first
-        
+        # Standard Resolutions using a mapping
+        # We look for the best video stream for each target resolution
+        desired_resolutions = [1080, 720, 480, 360]
         found_res = set()
         
-        for f in video_formats:
-            res = f.get('height')
-            if res and res not in found_res:
-                filesize = f.get('filesize') or f.get('filesize_approx')
-                size_str = ""
-                if filesize:
-                    size_mb = filesize / (1024 * 1024)
-                    size_str = f" ~{size_mb:.1f}MB"
-                
-                label = f"{res}p{size_str}"
-                
-                # Check codec to hint better compatibility? (e.g. h264 vs av01)
-                # For now, just label by resolution.
-                
-                options.append({
-                    'format_id': f.get('format_id'),
-                    'label': label,
-                    'ext': 'mp4',
-                    'type': 'video',
-                    'filesize': filesize
-                })
-                found_res.add(res)
-                
-                # Limit to top 5 video options to avoid spam
-                if len(found_res) >= 5:
-                    break
+        # Pre-filter suitable video streams
+        video_formats = [f for f in raw_formats if f.get('vcodec') != 'none' and f.get('height')]
+        video_formats.sort(key=lambda x: x['height'], reverse=True) # Highest first
+
+        for target in desired_resolutions:
+            # Find the best match close to this resolution
+            # We strictly look for exact match or slightly higher/lower? 
+            # Simple approach: distinct heights present in the file
+            for f in video_formats:
+                res = f.get('height')
+                # Check if this res matches one of our desired targets exactly
+                if res == target and res not in found_res:
+                    filesize = f.get('filesize') or f.get('filesize_approx')
+                    size_str = ""
+                    if filesize:
+                        size_mb = filesize / (1024 * 1024)
+                        size_str = f" ~{size_mb:.1f}MB"
+                    
+                    label = f"{target}p{size_str}"
+                    options.append({
+                        'format_id': f.get('format_id'),
+                        'label': label,
+                        'ext': 'mp4', # We force merge to mp4 usually
+                        'type': 'video',
+                        'filesize': filesize
+                    })
+                    found_res.add(target)
+                    break 
+        
+        # Fallback: If we have very few options (e.g. only audio + 0-1 videos), 
+        # add the best available video streams that didn't match strict buckets.
+        # This handles platforms like X/Twitter using weird resolutions (e.g. 640x360).
+        if len(found_res) == 0:
+            for f in video_formats:
+                res = f.get('height')
+                if res and res not in found_res:
+                    filesize = f.get('filesize') or f.get('filesize_approx')
+                    size_str = ""
+                    if filesize:
+                        size_mb = filesize / (1024 * 1024)
+                        size_str = f" ~{size_mb:.1f}MB"
+                    
+                    label = f"{res}p{size_str}"
+                    options.append({
+                        'format_id': f.get('format_id'),
+                        'label': label,
+                        'ext': 'mp4',
+                        'type': 'video',
+                        'filesize': filesize
+                    })
+                    found_res.add(res)
+                    # Limit to top 3 fallback options
+                    if len(found_res) >= 3:
+                        break
 
         return options
 
