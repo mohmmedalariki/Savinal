@@ -19,15 +19,35 @@ class YtDlpWrapper:
         os.makedirs(download_dir, exist_ok=True)
         
         # Handle Cookies from Env (for YouTube "Sign in" errors)
+        # Handle Cookies from Env (for YouTube "Sign in" errors)
         self.cookie_file = None
         cookies_content = os.getenv('COOKIES_CONTENT')
         if cookies_content:
             try:
                 self.cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
-                # Determine if it's base64 encoded (common for multiline env vars in some dashboards)
-                # or just plain text. For safety, just write as-is, assuming user pasted Netscape format.
+                
+                # Check if it looks like Base64 (simple heuristic: no spaces, proper padding)
+                # Or just try to decode it first.
+                import base64
+                content_to_write = cookies_content
+                
+                # Try to decode if it looks like b64 (no spaces, newlines are fine but often stripped in UI)
+                # If the user pasted raw text with tabs, it might fail decode, which is fine.
+                try:
+                    # detailed check or just blind try
+                    decoded_bytes = base64.b64decode(cookies_content)
+                    # If it decodes to something that looks like utf-8 text, use it
+                    decoded_str = decoded_bytes.decode('utf-8')
+                    # Validation: Does it look like Netscape format? (Access, Path, etc) or just random binary?
+                    if '# Netscape' in decoded_str or '.google.com' in decoded_str or 'TRUE' in decoded_str:
+                         content_to_write = decoded_str
+                         logger.info("Detected and decoded Base64 cookie content.")
+                except Exception:
+                    # Not base64, assume raw text
+                    pass
+
                 with open(self.cookie_file, 'w') as f:
-                    f.write(cookies_content)
+                    f.write(content_to_write)
                 logger.info(f"Loaded cookies from environment into {self.cookie_file}")
             except Exception as e:
                 logger.error(f"Failed to write cookies file: {e}")
