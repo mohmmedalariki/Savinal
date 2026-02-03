@@ -17,6 +17,20 @@ class YtDlpWrapper:
     def __init__(self, download_dir='downloads'):
         self.download_dir = download_dir
         os.makedirs(download_dir, exist_ok=True)
+        
+        # Handle Cookies from Env (for YouTube "Sign in" errors)
+        self.cookie_file = None
+        cookies_content = os.getenv('COOKIES_CONTENT')
+        if cookies_content:
+            try:
+                self.cookie_file = os.path.join(os.getcwd(), 'cookies.txt')
+                # Determine if it's base64 encoded (common for multiline env vars in some dashboards)
+                # or just plain text. For safety, just write as-is, assuming user pasted Netscape format.
+                with open(self.cookie_file, 'w') as f:
+                    f.write(cookies_content)
+                logger.info(f"Loaded cookies from environment into {self.cookie_file}")
+            except Exception as e:
+                logger.error(f"Failed to write cookies file: {e}")
 
     def _get_opts(self, extra_opts=None):
         """Return base yt-dlp options."""
@@ -24,8 +38,29 @@ class YtDlpWrapper:
             'quiet': True,
             'no_warnings': True,
             'outtmpl': f'{self.download_dir}/%(id)s_%(format_id)s.%(ext)s',
-            'restrictfilenames': True,  # ASCII only filenames
+            'restrictfilenames': True,
+            # Mimic a real browser to avoid being blocked (especially by FB/IG)
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            # Prefer MP4/H264 for compatibility
+            'format_sort': ['res:1080', 'res:720', 'res:480', 'codec:h264', 'ext:mp4:m4a'],
         }
+        
+        # Add cookie file if available
+        if self.cookie_file and os.path.exists(self.cookie_file):
+            opts['cookiefile'] = self.cookie_file
+            
+        # Try to use alternative clients for YouTube to bypass bot detection if no cookies
+        # or even with cookies to be safer.
+        # 'android' client is often less throttled.
+        # We perform a safe merge if extra_opts has extractor_args
+        if 'extractor_args' not in opts:
+             opts['extractor_args'] = {}
+        
+        # Default to android/web clients for youtube
+        opts['extractor_args']['youtube'] = {
+            'player_client': ['android', 'web']
+        }
+
         if extra_opts:
             opts.update(extra_opts)
         return opts
