@@ -225,8 +225,56 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(conv_handler)
     
+    # --- Health Check Server (for Koyeb/Render) ---
+    from aiohttp import web
+
+    async def health_check(request):
+        return web.Response(text="OK", status=200)
+
+    async def run_server():
+        server_app = web.Application()
+        server_app.router.add_get('/', health_check)
+        runner = web.AppRunner(server_app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', 8000)
+        await site.start()
+        logger.info("Health check server started on port 8000")
+
+    # We need to run polling WITHOUT blocking the loop, so we can run the server too.
+    # Application.run_polling() is blocking. We use initialize/start/updater pattern or custom loop.
+    # Simpler approach: Use application.run_polling() but inject the server startup?
+    # No, run_polling blocks. 
+    # Better: Use asyncio.gather logic if we had control, but PTB manages the loop.
+    # PTB v20+ way:
+    
+    async def main_loop():
+        # Start web server
+        await run_server()
+        
+        # Start Loop
+        async with app:
+            await app.start()
+            if app.updater: # Should be None for polling unless we init it
+                 pass
+            # We use a custom updater or just run_polling in a wrapper?
+            # Actually, application.run_polling() supports customization but it's easier to just
+            # start the updater manually.
+            await app.updater.start_polling()
+            
+            # Keep alive
+            logger.info("Bot started polling.")
+            # Simple keep-alive loop
+            stop_signal = asyncio.Event()
+            await stop_signal.wait()
+
+    # REFACTOR: run_polling is very robust. Let's stick to it but use post_init to start server.
+    async def post_init(application):
+        await run_server()
+
+    app.post_init = post_init
+    
     print("Bot is polling...")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
