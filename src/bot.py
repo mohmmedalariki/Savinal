@@ -128,7 +128,6 @@ async def process_download(update, context, url, format_id, message_object):
     """Actual download logic, running in background."""
     
     last_update_percent = 0
-    loop = asyncio.get_running_loop()
     
     def progress_callback(d):
         nonlocal last_update_percent
@@ -140,11 +139,10 @@ async def process_download(update, context, url, format_id, message_object):
                 # update every 20%
                 if p - last_update_percent >= 20 or p == 100:
                     last_update_percent = p
-                    # We are in a thread here (yt-dlp), so we must use threadsafe call
-                    asyncio.run_coroutine_threadsafe(
-                        safe_edit(message_object, messages.DOWNLOADING.format(percent=p)), 
-                        loop
-                    )
+                    # We need to schedule the edit on the loop
+                    # Note: handling 'message_object' which might be stale if user deleted chat is risky
+                    # We'll use a silent try/except
+                    asyncio.create_task(safe_edit(message_object, messages.DOWNLOADING.format(percent=p)))
             except ValueError:
                 pass
 
@@ -227,56 +225,8 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(conv_handler)
     
-    # --- Health Check Server (for Koyeb/Render) ---
-    from aiohttp import web
-
-    async def health_check(request):
-        return web.Response(text="OK", status=200)
-
-    async def run_server():
-        server_app = web.Application()
-        server_app.router.add_get('/', health_check)
-        runner = web.AppRunner(server_app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 8000)
-        await site.start()
-        logger.info("Health check server started on port 8000")
-
-    # We need to run polling WITHOUT blocking the loop, so we can run the server too.
-    # Application.run_polling() is blocking. We use initialize/start/updater pattern or custom loop.
-    # Simpler approach: Use application.run_polling() but inject the server startup?
-    # No, run_polling blocks. 
-    # Better: Use asyncio.gather logic if we had control, but PTB manages the loop.
-    # PTB v20+ way:
-    
-    async def main_loop():
-        # Start web server
-        await run_server()
-        
-        # Start Loop
-        async with app:
-            await app.start()
-            if app.updater: # Should be None for polling unless we init it
-                 pass
-            # We use a custom updater or just run_polling in a wrapper?
-            # Actually, application.run_polling() supports customization but it's easier to just
-            # start the updater manually.
-            await app.updater.start_polling()
-            
-            # Keep alive
-            logger.info("Bot started polling.")
-            # Simple keep-alive loop
-            stop_signal = asyncio.Event()
-            await stop_signal.wait()
-
-    # REFACTOR: run_polling is very robust. Let's stick to it but use post_init to start server.
-    async def post_init(application):
-        await run_server()
-
-    app.post_init = post_init
-    
     print("Bot is polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
